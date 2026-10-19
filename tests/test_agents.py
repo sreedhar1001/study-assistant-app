@@ -1,5 +1,6 @@
 """Offline unit tests for agent prompts, validation, and request routing."""
 
+import json
 import unittest
 from datetime import datetime, timezone
 from unittest.mock import patch
@@ -52,11 +53,27 @@ class QuizAgentTests(unittest.TestCase):
 
 
 class StudyPlannerAgentTests(unittest.TestCase):
+    @staticmethod
+    def make_plan(day_count=7, daily_minutes=60):
+        return json.dumps({"days": [
+            {
+                "day": day,
+                "topic": f"Topic {day}",
+                "learning_objective": f"Understand concept {day}",
+                "practical_exercise": f"Complete practice {day}",
+                "time_allocation": [
+                    {"activity": "Learn", "minutes": daily_minutes // 2},
+                    {"activity": "Practice", "minutes": daily_minutes - daily_minutes // 2},
+                ],
+            }
+            for day in range(1, day_count + 1)
+        ]})
+
     def test_planner_uses_all_supplied_constraints(self):
-        answer = RecordingAnswer()
-        study_planner_agent.respond(
+        prompts = []
+        result = study_planner_agent.respond(
             "Make my schedule",
-            answer,
+            lambda prompt: (prompts.append(prompt) or self.make_plan(daily_minutes=45)),
             planning_details={
                 "subjects": "Maths, Biology",
                 "goal": "Review chapters 1-3",
@@ -64,8 +81,75 @@ class StudyPlannerAgentTests(unittest.TestCase):
                 "deadline": "Friday",
             },
         )
+        self.assertEqual(result.count("**Day "), 7)
         for detail in ("Maths, Biology", "Review chapters 1-3", "45 minutes", "Friday"):
-            self.assertIn(detail, answer.prompt)
+            self.assertIn(detail, prompts[0])
+
+    def test_generates_exactly_seven_days_with_required_fields_and_bounded_time(self):
+        prompts = []
+        result = study_planner_agent.respond(
+            "Create a beginner 7-day machine-learning plan with one hour per day",
+            lambda prompt: (prompts.append(prompt) or self.make_plan()),
+            planning_details={"minutes_per_day": 60},
+        )
+        self.assertEqual(result.count("**Day "), 7)
+        self.assertIn("420 minutes total", result)
+        self.assertEqual(len(prompts), 1)
+        self.assertIn("7 sequential days", prompts[0])
+        self.assertLessEqual(len(prompts[0]), 900)
+        for day in range(1, 8):
+            self.assertIn(f"**Day {day}: Topic {day}**", result)
+        self.assertEqual(result.count("Learning objective:"), 7)
+        self.assertEqual(result.count("Practical exercise:"), 7)
+        self.assertEqual(result.count("60/60 min"), 7)
+
+    def test_typed_daily_time_overrides_the_sidebar_default(self):
+        prompts = []
+        result = study_planner_agent.respond(
+            "Create a 7-day plan with one hour per day",
+            lambda prompt: (prompts.append(prompt) or self.make_plan()),
+            planning_details={"minutes_per_day": 30},
+        )
+        self.assertIn("available time=60 minutes per day", prompts[0])
+        self.assertIn("60/60 min", result)
+
+    def test_invalid_plan_is_repaired_once_then_returned(self):
+        responses = iter(["not json", self.make_plan()])
+        result = study_planner_agent.respond("Make a 7-day plan", lambda _prompt: next(responses))
+        self.assertEqual(result.count("**Day "), 7)
+
+    def test_provider_failure_is_reported_without_repeating_api_call(self):
+        calls = []
+        def unavailable(_prompt):
+            calls.append(True)
+            raise ValueError("Groq rate limit or account quota was reached.")
+        with self.assertRaisesRegex(ValueError, "Groq rate limit"):
+            study_planner_agent.respond("Make a 7-day plan", unavailable)
+        self.assertEqual(len(calls), 1)
+
+    def test_incomplete_or_over_limit_plan_is_rejected_after_retry(self):
+        incomplete = json.dumps({"days": [{"day": 1}]})
+        with self.assertRaisesRegex(ValueError, "complete, time-checked"):
+            study_planner_agent.respond("Make a 7-day plan", lambda _prompt: incomplete)
+        too_long = self.make_plan(daily_minutes=61)
+        with self.assertRaisesRegex(ValueError, "complete, time-checked"):
+            study_planner_agent.respond("Make a 7-day plan", lambda _prompt: too_long)
+
+    def test_pdf_material_is_grounded_only_when_explicitly_requested(self):
+        prompts = []
+        result = study_planner_agent.respond(
+            "Create a 7-day plan based on the attached PDF",
+            lambda prompt: (prompts.append(prompt) or self.make_plan()),
+            document={"name": "course.pdf", "text": "Lesson 1: supervised learning."},
+        )
+        self.assertEqual(result.count("**Day "), 7)
+        self.assertIn("Lesson 1: supervised learning", prompts[0])
+        self.assertTrue(study_planner_agent.requests_document("Make a plan from the attached PDF"))
+        self.assertFalse(study_planner_agent.requests_document("Make me a beginner ML plan"))
+
+    def test_explicit_pdf_request_requires_an_attached_document(self):
+        with self.assertRaisesRegex(ValueError, "Attach the study PDF"):
+            study_planner_agent.respond("Make a plan based on my PDF", lambda _: "")
 
     def test_planner_rejects_invalid_time(self):
         with self.assertRaises(ValueError):
@@ -94,6 +178,17 @@ class SupervisorTests(unittest.TestCase):
         result = supervisor.dispatch("Explain gravity", RecordingAnswer())
         self.assertEqual(result["agent"], "tutor")
         self.assertEqual(result["text"], "provider response")
+
+    def test_dispatch_uses_planner_specific_answer_callback(self):
+        def plan(_prompt):
+            return StudyPlannerAgentTests.make_plan()
+        result = supervisor.dispatch(
+            "Create a 7-day study plan",
+            RecordingAnswer(),
+            planner_answer=plan,
+        )
+        self.assertEqual(result["agent"], "planner")
+        self.assertEqual(result["text"].count("**Day "), 7)
 
 
 class ExistingAssistantRegressionTests(unittest.TestCase):

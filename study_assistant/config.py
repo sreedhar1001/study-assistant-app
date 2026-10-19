@@ -26,6 +26,8 @@ def load_config() -> dict[str, str]:
             value = value.strip()
             if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
                 value = value[1:-1]
+            if not value or value.casefold().startswith(("your-", "your_", "replace-", "replace_", "<")):
+                continue
             values[name] = value
 
     if os.environ.get("TAVILY_API_KEY"):

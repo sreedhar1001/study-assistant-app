@@ -24,6 +24,11 @@ _DAY_PATTERNS = (
     re.compile(r"\bfor\s+(\d{1,2})\s+days?\b", re.IGNORECASE),
     re.compile(r"\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fourteen|fifteen|twenty|thirty)\s+days?\b", re.IGNORECASE),
 )
+_DAILY_TIME_PATTERN = re.compile(
+    r"\b(?:(\d{1,3})|(one|two|three|four|five|six|seven|eight|nine|ten))\s*"
+    r"(hours?|hrs?|minutes?|mins?)\s*(?:(?:per|each|a|every)\s*day|daily|/\s*day)?\b",
+    re.IGNORECASE,
+)
 
 
 def requests_document(question: str) -> bool:
@@ -42,6 +47,18 @@ def _requested_days(question: str, default_days: int) -> int:
     if re.search(r"\btwo[- ]weeks?\b|\bfortnight\b", question, re.IGNORECASE):
         return 14
     return default_days
+
+
+def _requested_daily_minutes(question: str, default_minutes: int) -> int:
+    match = _DAILY_TIME_PATTERN.search(question)
+    if not match:
+        return default_minutes
+    amount = int(match.group(1)) if match.group(1) else _DAY_WORDS[match.group(2).casefold()]
+    unit = match.group(3).casefold()
+    minutes = amount * 60 if unit.startswith(("hour", "hr")) else amount
+    if not 5 <= minutes <= 720:
+        raise ValueError("Available study time must be between 5 and 720 minutes per day.")
+    return minutes
 
 
 def validate_planning_details(details: dict | None) -> dict[str, str | int]:
@@ -150,6 +167,7 @@ def respond(
         raise ValueError(f"Keep each request under {MAX_QUESTION_CHARS} characters.")
     details = validate_planning_details(planning_details)
     day_count = _requested_days(question, details["days"])
+    minutes_per_day = _requested_daily_minutes(question, details["minutes_per_day"])
     if not 1 <= day_count <= 30:
         raise ValueError("A study plan must cover between 1 and 30 days.")
     if requests_document(question) and document is None:
@@ -158,19 +176,17 @@ def respond(
     context = (
         f"subjects={details['subjects'] or 'infer the subject from the request'}; "
         f"goal={details['goal'] or 'use the learner’s stated goal'}; "
-        f"available time={details['minutes_per_day']} minutes per day; "
+        f"available time={minutes_per_day} minutes per day; "
         f"days={day_count}; level={details['skill_level']}; "
         f"deadline={details['deadline'] or 'not provided'}; response language={answer_language}"
     )
     instructions = (
-        "You are the Study Planner Agent. Create a practical educational plan independently; general plans do not "
-        "need web sources. If no level is given, assume beginner. Infer reasonable goals and subjects from the "
-        "request instead of asking for details it already provides. Return only valid JSON matching this schema: "
+        "Create a practical educational study plan. If level is unspecified, assume beginner; infer the subject and "
+        "goal from the request. Return only valid JSON matching this schema: "
         '{"days":[{"day":1,"topic":"...","learning_objective":"...","practical_exercise":"...",'
-        '"time_allocation":[{"activity":"...","minutes":30}]}]}. Include exactly the requested number of '
-        "consecutive numbered days. Every day must have all four fields. Split time into focused activities; the "
-        "minutes in each day must add up to no more than the stated daily limit. Do not add citations or claim a "
-        "source was used unless real research excerpts are supplied. Reply in the specified language."
+        '"time_allocation":[{"activity":"...","minutes":30}]}]}. Include exactly '
+        f"{day_count} sequential days. Every day needs all four fields; its activity minutes must total no more "
+        "than the daily limit. Do not invent sources. Reply in the specified language."
     )
     prompt = build_agent_prompt(instructions, question, history, context)
     if document is not None:
@@ -188,10 +204,10 @@ def respond(
 
     last_error = None
     for attempt in range(2):
+        generated = answer(prompt)
         try:
-            generated = answer(prompt)
-            parsed = validate_plan_response(generated, day_count, details["minutes_per_day"])
-            return format_plan(parsed, details["minutes_per_day"])
+            parsed = validate_plan_response(generated, day_count, minutes_per_day)
+            return format_plan(parsed, minutes_per_day)
         except ValueError as error:
             last_error = error
             if attempt == 0:

@@ -37,6 +37,17 @@ class StaticServerTests(unittest.TestCase):
                 self.assertEqual(response.status, 200)
                 self.assertGreater(int(response.headers["Content-Length"]), 0)
 
+    def test_provider_configuration_does_not_expose_api_keys(self):
+        with patch("server.load_config", return_value={
+            "TAVILY_API_KEY": "test-tavily-secret",
+            "GROQ_API_KEY": "test-groq-secret",
+        }):
+            with urlopen(f"{self.base_url}/api/config", timeout=3) as response:
+                body = response.read().decode("utf-8")
+        self.assertIn('"planner_provider": "groq"', body)
+        self.assertNotIn("test-tavily-secret", body)
+        self.assertNotIn("test-groq-secret", body)
+
     def test_repository_files_are_not_served(self):
         for path in (
             "/server.py",
@@ -106,6 +117,37 @@ class StaticServerTests(unittest.TestCase):
                 result = json.loads(response.read().decode("utf-8"))
         self.assertEqual(result["answer"], "Quiz result")
         self.assertIn("Quiz Agent", provider.call_args.args[1][0]["text"])
+
+    def test_general_study_plan_uses_groq_path_without_tavily_answer(self):
+        prompt = "Create a beginner 7-day machine-learning study plan with one hour per day"
+        plan = {"days": [
+            {
+                "day": day,
+                "topic": f"Topic {day}",
+                "learning_objective": f"Objective {day}",
+                "practical_exercise": f"Exercise {day}",
+                "time_allocation": [{"activity": "Study and practice", "minutes": 60}],
+            }
+            for day in range(1, 8)
+        ]}
+        payload = {
+            "provider": "tavily",
+            "messages": [{"role": "user", "text": prompt}],
+            "planning_details": {"minutes_per_day": 60},
+        }
+        request = Request(
+            f"{self.base_url}/api/chat",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with patch("server.load_config", return_value={"GROQ_API_KEY": "test-only"}), patch(
+            "server.generate_plan_answer", return_value=json.dumps(plan)
+        ) as groq, patch("server.generate_answer", side_effect=AssertionError("Tavily must not generate ordinary plans")):
+            with urlopen(request, timeout=3) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(result["answer"].count("**Day "), 7)
+        groq.assert_called_once()
 
     def test_rejects_text_attachment_over_character_limit(self):
         payload = {

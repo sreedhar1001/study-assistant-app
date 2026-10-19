@@ -465,7 +465,7 @@ fileInput.addEventListener('change', async () => {
     fileStatus.textContent = `${attachedDocument.name} · relevant excerpts only`;
     attachButton.textContent = 'Change file';
     removeFileButton.hidden = false;
-    liveStatus.textContent = `Attached ${attachedDocument.name}. Question-related excerpts will be sent to Tavily only if you confirm when sending your question.`;
+    liveStatus.textContent = `Attached ${attachedDocument.name}. The file is sent to the relevant answer provider only when you confirm and ask a question about it.`;
   } catch {
     clearAttachedDocument();
     fileStatus.textContent = 'Could not read that file. Try a text, Markdown, CSV, or JSON file.';
@@ -882,6 +882,15 @@ async function streamReply(reply, typingRow, searchQuery) {
   return readButton;
 }
 
+function isPlannerRequest(prompt) {
+  return agentSelect.value === 'Study Planner Agent'
+    || (agentSelect.value === 'Automatic' && /\b(study plan|study planner|study schedule|timetable|revision plan|plan my (studies|study|week)|(?:make|create|build|draft) (?:me )?(?:a )?(?:study )?plan|(?:make|create|build) (?:me )?(?:a )?schedule)\b/i.test(prompt));
+}
+
+function plannerExplicitlyUsesStudyFile(prompt) {
+  return isPlannerRequest(prompt) && /\b(based on|from|using|according to|use)\b.{0,50}\b(pdf|document|uploaded file|attached file|study file|course material|notes)\b|\b(pdf|uploaded document|attached document|uploaded file|attached file|study file|course material)\b.{0,50}\b(plan|schedule|timetable)\b/i.test(prompt);
+}
+
 async function submitPrompt(value, options = {}) {
   const prompt = value.trim();
   const sourceInput = options.input || input;
@@ -895,16 +904,18 @@ async function submitPrompt(value, options = {}) {
     composerHint.textContent = `Your question is too long · ${prompt.length}/${MAX_PROMPT_LENGTH}`;
     return;
   }
-  if (attachedPdf && !pdfConsent.checked) {
+  if (attachedPdf && (!isPlannerRequest(prompt) || plannerExplicitlyUsesStudyFile(prompt)) && !pdfConsent.checked) {
     liveStatus.textContent = 'Enable the course-material consent box before sending selected PDF passages and your question to an answer provider.';
     pdfConsent.focus();
     return;
   }
-  if (attachedDocument && !window.confirm(`Send “${attachedDocument.name}” and your question to Tavily? Only question-related excerpts that fit the search limit will be shared.`)) {
+  const sendDocument = attachedDocument && (!isPlannerRequest(prompt) || plannerExplicitlyUsesStudyFile(prompt));
+  const answerProviderName = isPlannerRequest(prompt) ? 'Groq' : 'Tavily';
+  if (sendDocument && !window.confirm(`Send "${attachedDocument.name}" and your question to ${answerProviderName}?`)) {
     liveStatus.textContent = 'The file was not sent. You can remove it or try again when ready.';
     return;
   }
-  const documentForRequest = attachedDocument;
+  const documentForRequest = sendDocument ? attachedDocument : null;
   isResponding = true;
   welcome.hidden = true;
   sourceInput.value = '';

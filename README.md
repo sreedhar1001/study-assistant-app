@@ -1,24 +1,24 @@
 # Study Assistant
 
-Study Assistant offers calm, direct explanations, practice prompts, and study planning for school and higher education learners. The web app sends questions through `server.py`; the Tavily key stays on the server and is never included in browser code.
+Study Assistant offers calm, direct explanations, practice prompts, and study planning for school and higher education learners. The web app sends questions through `server.py`; provider keys stay on the server and are never included in browser code. Tutor and quiz answers use Tavily. General study plans use Groq without web search; Tavily is added only when a plan explicitly needs current information.
 
 The backend keeps `server.py` as the HTTP entry point and compatibility layer. Configuration is in `study_assistant/config.py`, Tavily transport and image normalization are in `study_assistant/providers/tavily.py`, answer prompt construction is in `study_assistant/services/answers.py`, and the main server's bounded in-memory PDF index store is in `study_assistant/storage/pdf_indexes.py`. `agents/supervisor.py` routes work to the individual tutor, quiz, and planner modules and returns an `{agent, text}` response. Both the web API and Streamlit interface continue to call through the server adapter so the existing request flow and test seams stay stable.
 
 ## Run locally
 
-Set `TAVILY_API_KEY` in the local `.env` or `.env.example` file, or in the server environment. Then run `python server.py` and open `http://localhost:8508`.
+Set `TAVILY_API_KEY` and `GROQ_API_KEY` in local `.env` or server environment secrets. `.env.example` contains placeholders only. Then run `python server.py` and open `http://localhost:8508`.
 
 Install the Tavily client with `pip install -r requirements.txt`.
 
-To run the Streamlit interface locally, install the requirements and start it with `streamlit run app.py`. It calls the same Tavily-backed answer function as `server.py`; set `TAVILY_API_KEY` in `.env` or `.env.example` first.
+To run the Streamlit interface locally, install the requirements and start it with `streamlit run app.py`. It uses Tavily for tutor and quiz answers and Groq for study plans. The default Groq model is `openai/gpt-oss-20b`; set `GROQ_MODEL` to override it.
 
 The Streamlit interface includes automatic routing and manual Tutor, Quiz, and Study Planner agent choices. Quiz mode can create multiple-choice and short-answer practice and evaluate a learner's next response. Planner mode accepts subjects, a goal, daily study time, and an optional deadline. Conversation history stays in Streamlit session state.
 
-Drag and drop a course PDF into the main website sidebar or the Streamlit sidebar to use the RAG tutor. Uploads are limited to 200 MB; indexing also limits PDFs to 120 pages and 600 passages. The app extracts page text, chunks it with page labels, creates local multilingual embeddings with FastEmbed, and retrieves relevant passages for each question. PDF indexes are kept in memory (the main server expires them after one hour) and are not written to disk. Before answering from a PDF, the learner must enable the consent checkbox; only retrieved passages and the question are then sent to Tavily. The first upload downloads the embedding model. Scanned PDFs without selectable text need OCR before upload; OCR is not included.
+Drag and drop a course PDF into the main website sidebar or the Streamlit sidebar to use document-grounded answers or plans. Uploads are limited to 200 MB; indexing also limits PDFs to 120 pages and 600 passages. The app extracts page text, chunks it with page labels, creates local multilingual embeddings with FastEmbed, and retrieves relevant passages for each question. PDF indexes are kept in memory (the main server expires them after one hour) and are not written to disk. Before a document-based response, the learner must enable the consent checkbox; for study plans, retrieved passages go to Groq, while other agents use Tavily. A PDF is used for a plan only when the learner asks for it. The first upload downloads the embedding model. Scanned PDFs without selectable text need OCR before upload; OCR is not included.
 
 Run the offline agent and provider regression tests with `python -m unittest discover -s tests -v`. These tests mock Tavily and do not make API requests.
 
-The server reads `.env` and `.env.example` at request time and does not serve hidden files. It sends the latest question to Tavily Search and displays a direct answer tailored to the question. Chat answers omit URLs and links unless the learner asks for them. API use may incur charges. The local config filenames are ignored by Git; do not put real keys in browser code or share them in chat.
+The server reads `.env` and `.env.example` at request time and does not serve hidden files. Tutor and quiz requests are sent to Tavily, which supplies the answer and search results. Planner requests use Groq to generate a validated day-by-day schedule; Tavily search is used only when the learner asks for current or recent information. Chat answers omit URLs and links unless the learner asks for them. API use may incur charges. The local config filenames are ignored by Git; do not put real keys in `.env.example`, browser code, or chat.
 
 The chat can attach TXT, Markdown, CSV, or JSON study files up to 8,000 characters. Answers use question-related excerpts from the attached file as the primary source, respond to the learner's question, and explain the relevant reasoning. Tavily search queries have a 1,500-character limit, so only matching excerpts that fit are sent after the learner confirms. File text is kept out of saved chat history.
 

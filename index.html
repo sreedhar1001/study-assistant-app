@@ -36,7 +36,7 @@
           <small>Limit 200MB per file · PDF</small>
         </label>
         <p class="pdf-status" id="course-pdf-status" aria-live="polite"></p>
-        <label class="pdf-consent" id="pdf-consent-wrap" hidden><input id="pdf-consent" type="checkbox" disabled> Allow selected passages and my question to be sent to Tavily</label>
+        <label class="pdf-consent" id="pdf-consent-wrap" hidden><input id="pdf-consent" type="checkbox" disabled> Allow selected passages and my question to be sent to the answer provider</label>
         <button class="remove-pdf" id="remove-pdf" type="button" hidden>Remove PDF</button>
       </section>
       <details class="sidebar-agent" open>
@@ -176,7 +176,7 @@
             <div class="attachment-row"><input class="visually-hidden" id="study-file" type="file" accept=".txt,.md,.csv,.json,text/plain,text/markdown,text/csv,application/json"><button class="attach-button" id="attach-file" type="button" aria-controls="study-file">＋ Add study file</button><span class="file-status" id="file-status" aria-live="polite">TXT, MD, CSV, or JSON · up to 8,000 characters</span><button class="remove-file" id="remove-file" type="button" hidden>Remove</button></div>
             <div class="composer-bottom"><span class="composer-hint" id="composer-hint">A question is a good place to start · 2000 characters max</span><button class="send-button" type="submit" aria-label="Send question">↑</button></div>
           </form>
-          <p class="disclaimer">Questions and confirmed study file text go to Tavily. API usage may incur charges.</p>
+          <p class="disclaimer">Tutor and quiz answers use Tavily; study plans use Groq. Attached study material is sent only when you confirm. API usage may incur charges.</p>
         </div>
       </section>
     </main>
